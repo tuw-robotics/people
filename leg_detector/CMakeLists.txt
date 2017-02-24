@@ -26,6 +26,7 @@ find_package(catkin REQUIRED COMPONENTS
   people_tracking_filter
   image_geometry
   dynamic_reconfigure
+  tuw_object_msgs
 )
 
 ## dynamic reconfigure config
@@ -39,7 +40,7 @@ include_directories(
 )
 
 catkin_package(INCLUDE_DIRS include
-  CATKIN_DEPENDS people_msgs sensor_msgs std_msgs geometry_msgs visualization_msgs)
+  CATKIN_DEPENDS people_msgs sensor_msgs std_msgs geometry_msgs visualization_msgs tuw_object_msgs)
 
 ## Declare a cpp executable
 add_executable(leg_detector 

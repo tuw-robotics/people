@@ -44,6 +44,7 @@
 #include <people_msgs/PositionMeasurement.h>
 #include <people_msgs/PositionMeasurementArray.h>
 #include <sensor_msgs/LaserScan.h>
+#include <tuw_object_msgs/ObjectDetection.h>
 
 #include <tf/transform_listener.h>
 #include <tf/message_filter.h>
@@ -87,6 +88,7 @@ public:
   TrackerKalman filter_;
 
   string id_;
+  int id_int_;
   string object_id;
   ros::Time time_;
   ros::Time meas_time_;
@@ -94,6 +96,7 @@ public:
   double reliability, p;
 
   Stamped<Point> position_;
+  Stamped<Point> velocity_;
   SavedFeature* other;
   float dist_to_person_;
 
@@ -107,6 +110,7 @@ public:
     char id[100];
     snprintf(id, 100, "legtrack%d", nextid++);
     id_ = std::string(id);
+    id_int_ = nextid - 1;
 
     object_id = "";
     time_ = loc.stamp_;
@@ -195,6 +199,12 @@ private:
     position_[2] = est.pos_[2];
     position_.stamp_ = time_;
     position_.frame_id_ = fixed_frame;
+    // added velocity_
+    velocity_[0] = est.vel_[0];
+    velocity_[1] = est.vel_[1];
+    velocity_[2] = est.vel_[2];
+    velocity_.stamp_ = time_;
+    velocity_.frame_id_ = fixed_frame;
     double nreliability = fmin(1.0, fmax(0.1, est.vel_.length() / 0.5));
     //reliability = fmax(reliability, nreliability);
   }
@@ -243,8 +253,11 @@ public:
   ScanMask mask_;
 
   int mask_count_;
+  
+  sensor_msgs::LaserScan scan_meta_;
 
-  CvRTrees forest;
+//  CvRTrees forest;
+  cv::Ptr<cv::ml::RTrees> forest;
 
   float connected_thresh_;
 
@@ -264,6 +277,7 @@ public:
   int min_points_per_group;
 
   ros::Publisher people_measurements_pub_;
+  ros::Publisher people_tuw_pub_;
   ros::Publisher leg_measurements_pub_;
   ros::Publisher markers_pub_;
 
@@ -286,8 +300,12 @@ public:
   {
     if (g_argc > 1)
     {
-      forest.load(g_argv[1]);
-      feat_count_ = forest.get_active_var_mask()->cols;
+//      forest.load(g_argv[1]);
+//      feat_count_ = forest.get_active_var_mask()->cols;
+      forest = cv::ml::RTrees::create();
+      cv::String feature_file = cv::String(g_argv[1]);
+      forest = cv::ml::StatModel::load<cv::ml::RTrees>(feature_file);
+      feat_count_ = forest->getVarCount();
       printf("Loaded forest with %d features: %s\n", feat_count_, g_argv[1]);
     }
     else
@@ -301,6 +319,7 @@ public:
     // advertise topics
     leg_measurements_pub_ = nh_.advertise<people_msgs::PositionMeasurementArray>("leg_tracker_measurements", 0);
     people_measurements_pub_ = nh_.advertise<people_msgs::PositionMeasurementArray>("people_tracker_measurements", 0);
+    people_tuw_pub_ = nh_.advertise<tuw_object_msgs::ObjectDetection>("people_measurements_tuw", 0);
     markers_pub_ = nh_.advertise<visualization_msgs::Marker>("visualization_marker", 20);
 
     if (use_seeds_)
@@ -683,9 +702,17 @@ public:
 
     processor.splitConnected(connected_thresh_);
     processor.removeLessThan(5);
+    
+    scan_meta_.angle_increment = scan->angle_increment;
+    scan_meta_.angle_max = scan->angle_max;
+    scan_meta_.angle_min = scan->angle_min;
+    scan_meta_.header = scan->header;
+    scan_meta_.range_max = scan->range_max;
+    scan_meta_.range_min = scan->range_min;
 
-    CvMat* tmp_mat = cvCreateMat(1, feat_count_, CV_32FC1);
-
+//    CvMat* tmp_mat = cvCreateMat(1, feat_count_, CV_32FC1);
+    cv::Mat tmp_mat = cv::Mat(1, feat_count_, CV_32FC1);
+    
     // if no measurement matches to a tracker in the last <no_observation_timeout>  seconds: erase tracker
     ros::Time purge = scan->header.stamp + ros::Duration().fromSec(-no_observation_timeout_s);
     list<SavedFeature*>::iterator sf_iter = saved_features_.begin();
@@ -725,9 +752,18 @@ public:
       vector<float> f = calcLegFeatures(*i, *scan);
 
       for (int k = 0; k < feat_count_; k++)
-        tmp_mat->data.fl[k] = (float)(f[k]);
+        //tmp_mat->data.fl[k] = (float)(f[k]);
+	tmp_mat.data[k] = (float)(f[k]);
 
-      float probability = forest.predict_prob(tmp_mat);
+      //float probability = forest.predict_prob(tmp_mat);
+      
+      // Probability is the fuzzy measure of the probability that the second element should be chosen,
+      // in opencv2 RTrees had a method predict_prob, but that disapeared in opencv3, this is the
+      // substitute.
+      float probability = 0.5 -
+                          forest->predict(tmp_mat, cv::noArray(), cv::ml::RTrees::PREDICT_SUM) /
+                          forest->getRoots().size();
+      
       Stamped<Point> loc((*i)->center(), scan->header.stamp, scan->header.frame_id);
       try
       {
@@ -841,8 +877,8 @@ public:
       }
     }
 
-    cvReleaseMat(&tmp_mat);
-    tmp_mat = 0;
+    //cvReleaseMat(&tmp_mat);
+    //tmp_mat = 0;
     if (!use_seeds_)
       pairLegs();
 
@@ -850,6 +886,9 @@ public:
     int i = 0;
     vector<people_msgs::PositionMeasurement> people;
     vector<people_msgs::PositionMeasurement> legs;
+    
+    vector<tuw_object_msgs::Object> tuw_people;
+    vector<tuw_object_msgs::Object> tuw_legs;
 
     for (list<SavedFeature*>::iterator sf_iter = saved_features_.begin();
          sf_iter != saved_features_.end();
@@ -881,7 +920,25 @@ public:
         pos.covariance[8] = 10000.0;
         pos.initialization = 0;
         legs.push_back(pos);
-
+	
+	tuw_object_msgs::Object leg;
+	leg.ids.push_back((*sf_iter)->id_int_);
+	leg.shape = 1; // point?
+	leg.ids_confidence.push_back(reliability);
+	leg.pose.position.x = (*sf_iter)->position_[0];
+	leg.pose.position.y = (*sf_iter)->position_[1];
+	leg.pose.position.z = (*sf_iter)->position_[2];
+	leg.pose.orientation.x = 0;
+	leg.pose.orientation.y = 0;
+	leg.pose.orientation.z = 0;
+	leg.pose.orientation.w = 0;
+	leg.twist.angular.x = 0;
+	leg.twist.angular.y = 0;
+	leg.twist.angular.z = 0;
+	leg.twist.linear.x = (*sf_iter)->velocity_[0];
+	leg.twist.linear.y = (*sf_iter)->velocity_[1];
+	leg.twist.linear.z = (*sf_iter)->velocity_[2];
+	tuw_legs.push_back(leg);
       }
 
       if (publish_leg_markers_)
@@ -921,6 +978,16 @@ public:
           double dx = ((*sf_iter)->position_[0] + other->position_[0]) / 2,
                  dy = ((*sf_iter)->position_[1] + other->position_[1]) / 2,
                  dz = ((*sf_iter)->position_[2] + other->position_[2]) / 2;
+		 
+	  double vx = ((*sf_iter)->velocity_[0] + other->velocity_[0]) / 2,
+                 vy = ((*sf_iter)->velocity_[1] + other->velocity_[1]) / 2,
+                 vz = ((*sf_iter)->velocity_[2] + other->velocity_[2]) / 2;
+		 
+	  // assume person is oriented in direction of (linear) velocity
+	  // orientation from velocity vector direction
+	  double yaw = atan2(vy, vx);
+	  tf::Quaternion q;
+	  q.setRPY(0, 0, yaw);
 
           if (publish_people_)
           {
@@ -945,6 +1012,29 @@ public:
             pos.covariance[8] = 10000.0;
             pos.initialization = 0;
             people.push_back(pos);
+	    
+	    tuw_object_msgs::Object person;
+	    // person has ids of both legs with their prob. multiplied assigned to each of them
+	    // so every person consists of a pair of ids (leg1_id, leg2_id)
+	    person.ids.push_back((*sf_iter)->id_int_);
+	    person.ids.push_back(other->id_int_);
+	    person.ids_confidence.push_back(reliability * other->reliability);
+	    person.ids_confidence.push_back(reliability * other->reliability);
+	    person.shape = 1; // point?
+	    person.pose.position.x = dx;
+	    person.pose.position.y = dy;
+	    person.pose.position.z = dz;
+	    person.pose.orientation.x = q.x();
+	    person.pose.orientation.y = q.y();
+	    person.pose.orientation.z = q.z();
+	    person.pose.orientation.w = q.w();
+	    person.twist.angular.x = 0;
+	    person.twist.angular.y = 0;
+	    person.twist.angular.z = 0;
+	    person.twist.linear.x = vx;
+	    person.twist.linear.y = vy;
+	    person.twist.linear.z = vz;
+	    tuw_people.push_back(person);
           }
 
           if (publish_people_markers_)
@@ -954,13 +1044,17 @@ public:
             m.header.frame_id = fixed_frame;
             m.ns = "PEOPLE";
             m.id = i;
-            m.type = m.SPHERE;
+            m.type = m.ARROW;
             m.pose.position.x = dx;
             m.pose.position.y = dy;
             m.pose.position.z = dz;
-            m.scale.x = .2;
-            m.scale.y = .2;
-            m.scale.z = .2;
+	    m.pose.orientation.x = q.x();
+	    m.pose.orientation.y = q.y();
+	    m.pose.orientation.z = q.z();
+	    m.pose.orientation.w = q.w();
+            m.scale.x = sqrt(pow(vx, 2) + pow(vy, 2)); // length of arrow
+            m.scale.y = 0.05;
+            m.scale.z = 0.05;
             m.color.a = 1;
             m.color.g = 1;
             m.lifetime = ros::Duration(0.5);
@@ -973,6 +1067,21 @@ public:
 
     people_msgs::PositionMeasurementArray array;
     array.header.stamp = ros::Time::now();
+    
+    tuw_object_msgs::ObjectDetection detection_array;
+    detection_array.header.stamp = ros::Time::now();
+    detection_array.header.frame_id = fixed_frame;
+    detection_array.distance_max = scan_meta_.range_max;
+    detection_array.distance_min = scan_meta_.range_min;
+    detection_array.distance_max_id = scan_meta_.range_max;
+    detection_array.view_direction.w = 1;
+    detection_array.view_direction.x = 0;
+    detection_array.view_direction.y = 0;
+    detection_array.view_direction.z = 0;
+    detection_array.fov_horizontal = scan_meta_.angle_max - scan_meta_.angle_min;
+    detection_array.fov_vertical = 0;
+    detection_array.type = "person";
+    
     if (publish_legs_)
     {
       array.people = legs;
@@ -982,6 +1091,8 @@ public:
     {
       array.people = people;
       people_measurements_pub_.publish(array);
+      detection_array.objects = tuw_people;
+      people_tuw_pub_.publish(detection_array);
     }
   }
 };
