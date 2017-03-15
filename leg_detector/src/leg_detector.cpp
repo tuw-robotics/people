@@ -45,6 +45,7 @@
 #include <people_msgs/PositionMeasurementArray.h>
 #include <sensor_msgs/LaserScan.h>
 #include <tuw_object_msgs/ObjectDetection.h>
+#include <tuw_object_msgs/ObjectWithCovariance.h>
 
 #include <tf/transform_listener.h>
 #include <tf/message_filter.h>
@@ -66,17 +67,15 @@ using namespace estimation;
 using namespace BFL;
 using namespace MatrixWrapper;
 
-
 static double no_observation_timeout_s = 0.5;
-static double max_second_leg_age_s     = 2.0;
-static double max_track_jump_m         = 1.0;
-static double max_meas_jump_m          = 0.75; // 1.0
-static double leg_pair_separation_m    = 1.0;
-static string fixed_frame              = "odom_combined";
+static double max_second_leg_age_s = 2.0;
+static double max_track_jump_m = 1.0;
+static double max_meas_jump_m = 0.75;  // 1.0
+static double leg_pair_separation_m = 1.0;
+static string fixed_frame = "odom_combined";
 
 static double kal_p = 4, kal_q = .002, kal_r = 10;
 static bool use_filter = true;
-
 
 class SavedFeature
 {
@@ -102,10 +101,11 @@ public:
 
   // one leg tracker
   SavedFeature(Stamped<Point> loc, TransformListener& tfl)
-    : tfl_(tfl),
-      sys_sigma_(Vector3(0.05, 0.05, 0.05), Vector3(1.0, 1.0, 1.0)),
-      filter_("tracker_name", sys_sigma_),
-      reliability(-1.), p(4)
+    : tfl_(tfl)
+    , sys_sigma_(Vector3(0.05, 0.05, 0.05), Vector3(1.0, 1.0, 1.0))
+    , filter_("tracker_name", sys_sigma_)
+    , reliability(-1.)
+    , p(4)
   {
     char id[100];
     snprintf(id, 100, "legtrack%d", nextid++);
@@ -206,14 +206,11 @@ private:
     velocity_.stamp_ = time_;
     velocity_.frame_id_ = fixed_frame;
     double nreliability = fmin(1.0, fmax(0.1, est.vel_.length() / 0.5));
-    //reliability = fmax(reliability, nreliability);
+    // reliability = fmax(reliability, nreliability);
   }
 };
 
 int SavedFeature::nextid = 0;
-
-
-
 
 class MatchedFeature
 {
@@ -224,23 +221,18 @@ public:
   double probability_;
 
   MatchedFeature(SampleSet* candidate, SavedFeature* closest, float distance, double probability)
-    : candidate_(candidate)
-    , closest_(closest)
-    , distance_(distance)
-    , probability_(probability)
-  {}
-
-  inline bool operator< (const MatchedFeature& b) const
+    : candidate_(candidate), closest_(closest), distance_(distance), probability_(probability)
   {
-    return (distance_ <  b.distance_);
+  }
+
+  inline bool operator<(const MatchedFeature& b) const
+  {
+    return (distance_ < b.distance_);
   }
 };
 
 int g_argc;
 char** g_argv;
-
-
-
 
 // actual legdetector node
 class LegDetector
@@ -253,10 +245,10 @@ public:
   ScanMask mask_;
 
   int mask_count_;
-  
+
   sensor_msgs::LaserScan scan_meta_;
 
-//  CvRTrees forest;
+  //  CvRTrees forest;
   cv::Ptr<cv::ml::RTrees> forest;
 
   float connected_thresh_;
@@ -288,20 +280,20 @@ public:
   tf::MessageFilter<people_msgs::PositionMeasurement> people_notifier_;
   tf::MessageFilter<sensor_msgs::LaserScan> laser_notifier_;
 
-  LegDetector(ros::NodeHandle nh) :
-    nh_(nh),
-    mask_count_(0),
-    feat_count_(0),
-    next_p_id_(0),
-    people_sub_(nh_, "people_tracker_filter", 10),
-    laser_sub_(nh_, "scan", 10),
-    people_notifier_(people_sub_, tfl_, fixed_frame, 10),
-    laser_notifier_(laser_sub_, tfl_, fixed_frame, 10)
+  LegDetector(ros::NodeHandle nh)
+    : nh_(nh)
+    , mask_count_(0)
+    , feat_count_(0)
+    , next_p_id_(0)
+    , people_sub_(nh_, "people_tracker_filter", 10)
+    , laser_sub_(nh_, "scan", 10)
+    , people_notifier_(people_sub_, tfl_, fixed_frame, 10)
+    , laser_notifier_(laser_sub_, tfl_, fixed_frame, 10)
   {
     if (g_argc > 1)
     {
-//      forest.load(g_argv[1]);
-//      feat_count_ = forest.get_active_var_mask()->cols;
+      //      forest.load(g_argv[1]);
+      //      feat_count_ = forest.get_active_var_mask()->cols;
       forest = cv::ml::RTrees::create();
       cv::String feature_file = cv::String(g_argv[1]);
       forest = cv::ml::StatModel::load<cv::ml::RTrees>(feature_file);
@@ -337,40 +329,39 @@ public:
     feature_id_ = 0;
   }
 
-
   ~LegDetector()
   {
   }
 
-  void configure(leg_detector::LegDetectorConfig &config, uint32_t level)
+  void configure(leg_detector::LegDetectorConfig& config, uint32_t level)
   {
-    connected_thresh_       = config.connection_threshold;
-    min_points_per_group    = config.min_points_per_group;
-    leg_reliability_limit_  = config.leg_reliability_limit;
-    publish_legs_           = config.publish_legs;
-    publish_people_         = config.publish_people;
-    publish_leg_markers_    = config.publish_leg_markers;
+    connected_thresh_ = config.connection_threshold;
+    min_points_per_group = config.min_points_per_group;
+    leg_reliability_limit_ = config.leg_reliability_limit;
+    publish_legs_ = config.publish_legs;
+    publish_people_ = config.publish_people;
+    publish_leg_markers_ = config.publish_leg_markers;
     publish_people_markers_ = config.publish_people_markers;
 
     no_observation_timeout_s = config.no_observation_timeout;
-    max_second_leg_age_s     = config.max_second_leg_age;
-    max_track_jump_m         = config.max_track_jump;
-    max_meas_jump_m          = config.max_meas_jump;
-    leg_pair_separation_m    = config.leg_pair_separation;
+    max_second_leg_age_s = config.max_second_leg_age;
+    max_track_jump_m = config.max_track_jump;
+    max_meas_jump_m = config.max_meas_jump;
+    leg_pair_separation_m = config.leg_pair_separation;
     if (fixed_frame.compare(config.fixed_frame) != 0)
     {
-      fixed_frame              = config.fixed_frame;
+      fixed_frame = config.fixed_frame;
       laser_notifier_.setTargetFrame(fixed_frame);
       people_notifier_.setTargetFrame(fixed_frame);
     }
 
-    kal_p                    = config.kalman_p;
-    kal_q                    = config.kalman_q;
-    kal_r                    = config.kalman_r;
-    use_filter               = config.kalman_on == 1;
+    kal_p = config.kalman_p;
+    kal_q = config.kalman_q;
+    kal_r = config.kalman_r;
+    use_filter = config.kalman_on == 1;
   }
 
-  double distance(list<SavedFeature*>::iterator it1,  list<SavedFeature*>::iterator it2)
+  double distance(list<SavedFeature*>::iterator it1, list<SavedFeature*>::iterator it2)
   {
     Stamped<Point> one = (*it1)->position_, two = (*it2)->position_;
     double dx = one[0] - two[0], dy = one[1] - two[1], dz = one[2] - two[2];
@@ -378,7 +369,8 @@ public:
   }
 
   // Find the tracker that is closest to this person message
-  // If a tracker was already assigned to a person, keep this assignment when the distance between them is not too large.
+  // If a tracker was already assigned to a person, keep this assignment when the distance between them is not too
+  // large.
   void peopleCallback(const people_msgs::PositionMeasurement::ConstPtr& people_meas)
   {
     // If there are no legs, return.
@@ -388,8 +380,9 @@ public:
     Point pt;
     pointMsgToTF(people_meas->pos, pt);
     Stamped<Point> person_loc(pt, people_meas->header.stamp, people_meas->header.frame_id);
-    person_loc[2] = 0.0; // Ignore the height of the person measurement.
-    Stamped<Point> dest_loc(pt, people_meas->header.stamp, people_meas->header.frame_id); // Holder for all transformed pts.
+    person_loc[2] = 0.0;  // Ignore the height of the person measurement.
+    Stamped<Point> dest_loc(pt, people_meas->header.stamp,
+                            people_meas->header.frame_id);  // Holder for all transformed pts.
 
     boost::mutex::scoped_lock lock(saved_mutex_);
 
@@ -417,9 +410,8 @@ public:
     {
       try
       {
-        tfl_.transformPoint((*it1)->id_, people_meas->header.stamp,
-                            person_loc, fixed_frame, dest_loc);
-        //ROS_INFO("Succesful leg transformation at spot 7");
+        tfl_.transformPoint((*it1)->id_, people_meas->header.stamp, person_loc, fixed_frame, dest_loc);
+        // ROS_INFO("Succesful leg transformation at spot 7");
       }
       catch (...)
       {
@@ -460,8 +452,6 @@ public:
       return;
     }
 
-
-
     // If we only found one close leg with the right label, let's try to find a second leg that
     //   * doesn't yet have a label  (=valid precondition),
     //   * is within the max distance,
@@ -480,7 +470,8 @@ public:
         // - it already has an id.
         // - it's too old. Old unassigned trackers are unlikely to be the second leg in a pair.
         // - it's too far away from the person.
-        if ((it1 == it2) || ((*it1)->object_id != "") || ((*it1)->getLifetime() > max_second_leg_age_s) || ((*it1)->dist_to_person_ >= closest_dist))
+        if ((it1 == it2) || ((*it1)->object_id != "") || ((*it1)->getLifetime() > max_second_leg_age_s) ||
+            ((*it1)->dist_to_person_ >= closest_dist))
           continue;
 
         // Get the distance between the two legs
@@ -505,7 +496,8 @@ public:
       // If we found a close, unlabeled leg, set it's label.
       if (closest != end)
       {
-        cout << "Replaced one leg with a distance of " << closest_dist << " and a distance between the legs of " << closest_dist_between_legs << endl;
+        cout << "Replaced one leg with a distance of " << closest_dist << " and a distance between the legs of "
+             << closest_dist_between_legs << endl;
         (*closest)->object_id = people_meas->object_id;
       }
       else
@@ -518,7 +510,8 @@ public:
     }
 
     cout << "Looking for a pair of new legs" << endl;
-    // If we didn't find any legs with this person's label, try to find two unlabeled legs that are close together and close to the tracker.
+    // If we didn't find any legs with this person's label, try to find two unlabeled legs that are close together and
+    // close to the tracker.
     it1 = saved_features_.begin();
     it2 = saved_features_.begin();
     closest = saved_features_.end();
@@ -559,8 +552,10 @@ public:
         }
         dist_between_legs = dest_loc.length();
 
-        // Ensure that this pair of legs is the closest pair to the tracker, and that the distance between the legs isn't too large.
-        if ((*it1)->dist_to_person_ + (*it2)->dist_to_person_ < closest_pair_dist && dist_between_legs < leg_pair_separation_m)
+        // Ensure that this pair of legs is the closest pair to the tracker, and that the distance between the legs
+        // isn't too large.
+        if ((*it1)->dist_to_person_ + (*it2)->dist_to_person_ < closest_pair_dist &&
+            dist_between_legs < leg_pair_separation_m)
         {
           closest_pair_dist = (*it1)->dist_to_person_ + (*it2)->dist_to_person_;
           closest1 = it1;
@@ -574,7 +569,8 @@ public:
     {
       (*closest1)->object_id = people_meas->object_id;
       (*closest2)->object_id = people_meas->object_id;
-      cout << "Found a completely new pair with total distance " << closest_pair_dist << " and a distance between the legs of " << closest_dist_between_legs << endl;
+      cout << "Found a completely new pair with total distance " << closest_pair_dist
+           << " and a distance between the legs of " << closest_dist_between_legs << endl;
       return;
     }
 
@@ -608,7 +604,8 @@ public:
       double closest_dist = leg_pair_separation_m;
       for (it = begin; it != end; ++it)
       {
-        if (it == leg1) continue;
+        if (it == leg1)
+          continue;
 
         if ((*it)->object_id == (*leg1)->object_id)
         {
@@ -620,13 +617,11 @@ public:
           continue;
 
         double d = distance(it, leg1);
-        if (((*it)->getLifetime() <= max_second_leg_age_s)
-            && (d < closest_dist))
+        if (((*it)->getLifetime() <= max_second_leg_age_s) && (d < closest_dist))
         {
           closest_dist = d;
           best = it;
         }
-
       }
 
       if (leg2 != end)
@@ -662,15 +657,13 @@ public:
       for (leg1 = begin; leg1 != end; ++leg1)
       {
         // If this leg has an id or low reliability, skip
-        if ((*leg1)->object_id != ""
-            || (*leg1)->getReliability() < leg_reliability_limit_)
+        if ((*leg1)->object_id != "" || (*leg1)->getReliability() < leg_reliability_limit_)
           continue;
 
         for (leg2 = begin; leg2 != end; ++leg2)
         {
-          if (((*leg2)->object_id != "")
-              || ((*leg2)->getReliability() < leg_reliability_limit_)
-              || (leg1 == leg2)) continue;
+          if (((*leg2)->object_id != "") || ((*leg2)->getReliability() < leg_reliability_limit_) || (leg1 == leg2))
+            continue;
           double d = distance(leg1, leg2);
           if (d < closest_dist)
           {
@@ -702,7 +695,7 @@ public:
 
     processor.splitConnected(connected_thresh_);
     processor.removeLessThan(5);
-    
+
     scan_meta_.angle_increment = scan->angle_increment;
     scan_meta_.angle_max = scan->angle_max;
     scan_meta_.angle_min = scan->angle_min;
@@ -710,9 +703,9 @@ public:
     scan_meta_.range_max = scan->range_max;
     scan_meta_.range_min = scan->range_min;
 
-//    CvMat* tmp_mat = cvCreateMat(1, feat_count_, CV_32FC1);
+    //    CvMat* tmp_mat = cvCreateMat(1, feat_count_, CV_32FC1);
     cv::Mat tmp_mat = cv::Mat(1, feat_count_, CV_32FC1);
-    
+
     // if no measurement matches to a tracker in the last <no_observation_timeout>  seconds: erase tracker
     ros::Time purge = scan->header.stamp + ros::Duration().fromSec(-no_observation_timeout_s);
     list<SavedFeature*>::iterator sf_iter = saved_features_.begin();
@@ -722,48 +715,46 @@ public:
       {
         if ((*sf_iter)->other)
           (*sf_iter)->other->other = NULL;
-        delete(*sf_iter);
+        delete (*sf_iter);
         saved_features_.erase(sf_iter++);
       }
       else
         ++sf_iter;
     }
 
-
     // System update of trackers, and copy updated ones in propagate list
     list<SavedFeature*> propagated;
-    for (list<SavedFeature*>::iterator sf_iter = saved_features_.begin();
-         sf_iter != saved_features_.end();
-         sf_iter++)
+    for (list<SavedFeature*>::iterator sf_iter = saved_features_.begin(); sf_iter != saved_features_.end(); sf_iter++)
     {
       (*sf_iter)->propagate(scan->header.stamp);
       propagated.push_back(*sf_iter);
     }
 
-
     // Detection step: build up the set of "candidate" clusters
     // For each candidate, find the closest tracker (within threshold) and add to the match list
     // If no tracker is found, start a new one
     multiset<MatchedFeature> matches;
-    for (list<SampleSet*>::iterator i = processor.getClusters().begin();
-         i != processor.getClusters().end();
-         i++)
+    for (list<SampleSet*>::iterator i = processor.getClusters().begin(); i != processor.getClusters().end(); i++)
     {
       vector<float> f = calcLegFeatures(*i, *scan);
 
+      // tmp_mat->data.fl[k] = (float)(f[k]);
       for (int k = 0; k < feat_count_; k++)
-        //tmp_mat->data.fl[k] = (float)(f[k]);
-	tmp_mat.data[k] = (float)(f[k]);
+      {
+        tmp_mat.data[k] = (float)(f[k]);
+      }
 
-      //float probability = forest.predict_prob(tmp_mat);
-      
+      // float probability = forest.predict_prob(tmp_mat);
+
       // Probability is the fuzzy measure of the probability that the second element should be chosen,
       // in opencv2 RTrees had a method predict_prob, but that disapeared in opencv3, this is the
       // substitute.
-      float probability = 0.5 -
-                          forest->predict(tmp_mat, cv::noArray(), cv::ml::RTrees::PREDICT_SUM) /
-                          forest->getRoots().size();
-      
+      float probability =
+          0.5 - forest->predict(tmp_mat, cv::noArray(), cv::ml::RTrees::PREDICT_SUM) / forest->getRoots().size();
+      // float probability = forest->predict(tmp_mat, cv::noArray(), cv::ml::RTrees::PREDICT_SUM) /
+      // forest->getRoots().size();
+      // ROS_WARN_NAMED("leg prob", "cluster probability = %f", probability);
+
       Stamped<Point> loc((*i)->center(), scan->header.stamp, scan->header.frame_id);
       try
       {
@@ -777,9 +768,7 @@ public:
       list<SavedFeature*>::iterator closest = propagated.end();
       float closest_dist = max_track_jump_m;
 
-      for (list<SavedFeature*>::iterator pf_iter = propagated.begin();
-           pf_iter != propagated.end();
-           pf_iter++)
+      for (list<SavedFeature*>::iterator pf_iter = propagated.begin(); pf_iter != propagated.end(); pf_iter++)
       {
         // find the closest distance between candidate and trackers
         float dist = loc.distance((*pf_iter)->position_);
@@ -792,7 +781,8 @@ public:
       // Nothing close to it, start a new track
       if (closest == propagated.end())
       {
-        list<SavedFeature*>::iterator new_saved = saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_));
+        list<SavedFeature*>::iterator new_saved =
+            saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_));
       }
       // Add the candidate, the tracker and the distance to a match list
       else
@@ -855,8 +845,7 @@ public:
         list<SavedFeature*>::iterator closest = propagated.end();
         float closest_dist = max_track_jump_m;
 
-        for (list<SavedFeature*>::iterator remain_iter = propagated.begin();
-             remain_iter != propagated.end();
+        for (list<SavedFeature*>::iterator remain_iter = propagated.begin(); remain_iter != propagated.end();
              remain_iter++)
         {
           float dist = loc.distance((*remain_iter)->position_);
@@ -870,15 +859,16 @@ public:
         // no tracker is within a threshold of this candidate
         // so create a new tracker for this candidate
         if (closest == propagated.end())
-          list<SavedFeature*>::iterator new_saved = saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_));
+          list<SavedFeature*>::iterator new_saved =
+              saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_));
         else
           matches.insert(MatchedFeature(matched_iter->candidate_, *closest, closest_dist, matched_iter->probability_));
         matches.erase(matched_iter);
       }
     }
 
-    //cvReleaseMat(&tmp_mat);
-    //tmp_mat = 0;
+    // cvReleaseMat(&tmp_mat);
+    // tmp_mat = 0;
     if (!use_seeds_)
       pairLegs();
 
@@ -886,19 +876,17 @@ public:
     int i = 0;
     vector<people_msgs::PositionMeasurement> people;
     vector<people_msgs::PositionMeasurement> legs;
-    
-    vector<tuw_object_msgs::Object> tuw_people;
-    vector<tuw_object_msgs::Object> tuw_legs;
 
-    for (list<SavedFeature*>::iterator sf_iter = saved_features_.begin();
-         sf_iter != saved_features_.end();
+    vector<tuw_object_msgs::ObjectWithCovariance> tuw_people;
+    vector<tuw_object_msgs::ObjectWithCovariance> tuw_legs;
+
+    for (list<SavedFeature*>::iterator sf_iter = saved_features_.begin(); sf_iter != saved_features_.end();
          sf_iter++, i++)
     {
       // reliability
       double reliability = (*sf_iter)->getReliability();
 
-      if ((*sf_iter)->getReliability() > leg_reliability_limit_
-          && publish_legs_)
+      if ((*sf_iter)->getReliability() > leg_reliability_limit_ && publish_legs_)
       {
         people_msgs::PositionMeasurement pos;
         pos.header.stamp = scan->header.stamp;
@@ -920,25 +908,34 @@ public:
         pos.covariance[8] = 10000.0;
         pos.initialization = 0;
         legs.push_back(pos);
-	
-	tuw_object_msgs::Object leg;
-	leg.ids.push_back((*sf_iter)->id_int_);
-	leg.shape = 1; // point?
-	leg.ids_confidence.push_back(reliability);
-	leg.pose.position.x = (*sf_iter)->position_[0];
-	leg.pose.position.y = (*sf_iter)->position_[1];
-	leg.pose.position.z = (*sf_iter)->position_[2];
-	leg.pose.orientation.x = 0;
-	leg.pose.orientation.y = 0;
-	leg.pose.orientation.z = 0;
-	leg.pose.orientation.w = 0;
-	leg.twist.angular.x = 0;
-	leg.twist.angular.y = 0;
-	leg.twist.angular.z = 0;
-	leg.twist.linear.x = (*sf_iter)->velocity_[0];
-	leg.twist.linear.y = (*sf_iter)->velocity_[1];
-	leg.twist.linear.z = (*sf_iter)->velocity_[2];
-	tuw_legs.push_back(leg);
+
+        tuw_object_msgs::ObjectWithCovariance leg;
+        leg.object.ids.push_back((*sf_iter)->id_int_);
+        leg.object.shape = 1;  // point?
+        leg.object.ids_confidence.push_back(reliability);
+        leg.object.pose.position.x = (*sf_iter)->position_[0];
+        leg.object.pose.position.y = (*sf_iter)->position_[1];
+        leg.object.pose.position.z = (*sf_iter)->position_[2];
+        leg.object.pose.orientation.x = 0;
+        leg.object.pose.orientation.y = 0;
+        leg.object.pose.orientation.z = 0;
+        leg.object.pose.orientation.w = 0;
+        leg.object.twist.angular.x = 0;
+        leg.object.twist.angular.y = 0;
+        leg.object.twist.angular.z = 0;
+        leg.object.twist.linear.x = (*sf_iter)->velocity_[0];
+        leg.object.twist.linear.y = (*sf_iter)->velocity_[1];
+        leg.object.twist.linear.z = (*sf_iter)->velocity_[2];
+        leg.covariance_pose.push_back(pow(0.3 / reliability, 2.0));
+        leg.covariance_pose.push_back(0.0);
+        leg.covariance_pose.push_back(0.0);
+        leg.covariance_pose.push_back(0.0);
+        leg.covariance_pose.push_back(pow(0.3 / reliability, 2.0));
+        leg.covariance_pose.push_back(0.0);
+        leg.covariance_pose.push_back(0.0);
+        leg.covariance_pose.push_back(0.0);
+        leg.covariance_pose.push_back(10000.0);
+        tuw_legs.push_back(leg);
       }
 
       if (publish_leg_markers_)
@@ -978,16 +975,16 @@ public:
           double dx = ((*sf_iter)->position_[0] + other->position_[0]) / 2,
                  dy = ((*sf_iter)->position_[1] + other->position_[1]) / 2,
                  dz = ((*sf_iter)->position_[2] + other->position_[2]) / 2;
-		 
-	  double vx = ((*sf_iter)->velocity_[0] + other->velocity_[0]) / 2,
+
+          double vx = ((*sf_iter)->velocity_[0] + other->velocity_[0]) / 2,
                  vy = ((*sf_iter)->velocity_[1] + other->velocity_[1]) / 2,
                  vz = ((*sf_iter)->velocity_[2] + other->velocity_[2]) / 2;
-		 
-	  // assume person is oriented in direction of (linear) velocity
-	  // orientation from velocity vector direction
-	  double yaw = atan2(vy, vx);
-	  tf::Quaternion q;
-	  q.setRPY(0, 0, yaw);
+
+          // assume person is oriented in direction of (linear) velocity
+          // orientation from velocity vector direction
+          double yaw = atan2(vy, vx);
+          tf::Quaternion q;
+          q.setRPY(0, 0, yaw);
 
           if (publish_people_)
           {
@@ -995,7 +992,8 @@ public:
             people_msgs::PositionMeasurement pos;
             pos.header.stamp = (*sf_iter)->time_;
             pos.header.frame_id = fixed_frame;
-            pos.name = (*sf_iter)->object_id;;
+            pos.name = (*sf_iter)->object_id;
+            ;
             pos.object_id = (*sf_iter)->id_ + "|" + other->id_;
             pos.pos.x = dx;
             pos.pos.y = dy;
@@ -1012,29 +1010,38 @@ public:
             pos.covariance[8] = 10000.0;
             pos.initialization = 0;
             people.push_back(pos);
-	    
-	    tuw_object_msgs::Object person;
-	    // person has ids of both legs with their prob. multiplied assigned to each of them
-	    // so every person consists of a pair of ids (leg1_id, leg2_id)
-	    person.ids.push_back((*sf_iter)->id_int_);
-	    person.ids.push_back(other->id_int_);
-	    person.ids_confidence.push_back(reliability * other->reliability);
-	    person.ids_confidence.push_back(reliability * other->reliability);
-	    person.shape = 1; // point?
-	    person.pose.position.x = dx;
-	    person.pose.position.y = dy;
-	    person.pose.position.z = dz;
-	    person.pose.orientation.x = q.x();
-	    person.pose.orientation.y = q.y();
-	    person.pose.orientation.z = q.z();
-	    person.pose.orientation.w = q.w();
-	    person.twist.angular.x = 0;
-	    person.twist.angular.y = 0;
-	    person.twist.angular.z = 0;
-	    person.twist.linear.x = vx;
-	    person.twist.linear.y = vy;
-	    person.twist.linear.z = vz;
-	    tuw_people.push_back(person);
+
+            tuw_object_msgs::ObjectWithCovariance person;
+            // person has ids of both legs with their prob. multiplied assigned to each of them
+            // so every person consists of a pair of ids (leg1_id, leg2_id)
+            person.object.ids.push_back((*sf_iter)->id_int_);
+            person.object.ids.push_back(other->id_int_);
+            person.object.ids_confidence.push_back(reliability * other->reliability);
+            person.object.ids_confidence.push_back(reliability * other->reliability);
+            person.object.shape = 1;  // point?
+            person.object.pose.position.x = dx;
+            person.object.pose.position.y = dy;
+            person.object.pose.position.z = dz;
+            person.object.pose.orientation.x = q.x();
+            person.object.pose.orientation.y = q.y();
+            person.object.pose.orientation.z = q.z();
+            person.object.pose.orientation.w = q.w();
+            person.object.twist.angular.x = 0;
+            person.object.twist.angular.y = 0;
+            person.object.twist.angular.z = 0;
+            person.object.twist.linear.x = vx;
+            person.object.twist.linear.y = vy;
+            person.object.twist.linear.z = vz;
+            person.covariance_pose.push_back(pow(0.3 / reliability, 2.0));
+            person.covariance_pose.push_back(0.0);
+            person.covariance_pose.push_back(0.0);
+            person.covariance_pose.push_back(0.0);
+            person.covariance_pose.push_back(pow(0.3 / reliability, 2.0));
+            person.covariance_pose.push_back(0.0);
+            person.covariance_pose.push_back(0.0);
+            person.covariance_pose.push_back(0.0);
+            person.covariance_pose.push_back(10000.0);
+            tuw_people.push_back(person);
           }
 
           if (publish_people_markers_)
@@ -1048,11 +1055,11 @@ public:
             m.pose.position.x = dx;
             m.pose.position.y = dy;
             m.pose.position.z = dz;
-	    m.pose.orientation.x = q.x();
-	    m.pose.orientation.y = q.y();
-	    m.pose.orientation.z = q.z();
-	    m.pose.orientation.w = q.w();
-            m.scale.x = sqrt(pow(vx, 2) + pow(vy, 2)); // length of arrow
+            m.pose.orientation.x = q.x();
+            m.pose.orientation.y = q.y();
+            m.pose.orientation.z = q.z();
+            m.pose.orientation.w = q.w();
+            m.scale.x = sqrt(pow(vx, 2) + pow(vy, 2));  // length of arrow
             m.scale.y = 0.05;
             m.scale.z = 0.05;
             m.color.a = 1;
@@ -1067,7 +1074,7 @@ public:
 
     people_msgs::PositionMeasurementArray array;
     array.header.stamp = ros::Time::now();
-    
+
     tuw_object_msgs::ObjectDetection detection_array;
     detection_array.header.stamp = ros::Time::now();
     detection_array.header.frame_id = fixed_frame;
@@ -1080,8 +1087,8 @@ public:
     detection_array.view_direction.z = 0;
     detection_array.fov_horizontal = scan_meta_.angle_max - scan_meta_.angle_min;
     detection_array.fov_vertical = 0;
-    detection_array.type = "person";
-    
+    detection_array.type = tuw_object_msgs::ObjectDetection::OBJECT_TYPE_PERSON;
+
     if (publish_legs_)
     {
       array.people = legs;
@@ -1097,7 +1104,7 @@ public:
   }
 };
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
   ros::init(argc, argv, "leg_detector");
   g_argc = argc;
@@ -1108,4 +1115,3 @@ int main(int argc, char **argv)
 
   return 0;
 }
-
