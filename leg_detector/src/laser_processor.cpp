@@ -40,6 +40,15 @@ using namespace ros;
 using namespace std;
 using namespace laser_processor;
 
+Sample::Sample(const Sample& other)
+{
+  index = other.index;
+  range = other.range;
+  intensity = other.intensity;
+  x = other.x;
+  y = other.y;
+}
+
 Sample* Sample::Extract(int ind, const sensor_msgs::LaserScan& scan)
 {
   Sample* s = new Sample();
@@ -54,6 +63,15 @@ Sample* Sample::Extract(int ind, const sensor_msgs::LaserScan& scan)
   {
     delete s;
     return NULL;
+  }
+}
+
+SampleSet::SampleSet(const SampleSet& other)
+{
+  // deep copy every element in sample set
+  for(SampleSet::const_iterator it = other.begin(); it != other.end(); it++)
+  {
+    this->insert(new Sample(**it));
   }
 }
 

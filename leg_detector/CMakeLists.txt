@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(leg_detector)
 
+add_definitions(-g)
+
 # look for bfl (Bayesian Filtering Library)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(BFL REQUIRED orocos-bfl)

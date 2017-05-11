@@ -69,6 +69,8 @@ public:
   float x;
   float y;
 
+  Sample(const Sample& other);
+  
   static Sample* Extract(int ind, const sensor_msgs::LaserScan& scan);
 
 private:
@@ -92,6 +94,9 @@ class SampleSet : public std::set<Sample*, CompareSample>
 {
 public:
   SampleSet() {}
+  
+  // deep copy construction
+  SampleSet(const SampleSet& other);
 
   ~SampleSet()
   {

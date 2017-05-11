@@ -98,14 +98,17 @@ public:
   Stamped<Point> velocity_;
   SavedFeature* other;
   float dist_to_person_;
+  
+  SampleSet sample_set_;
 
   // one leg tracker
-  SavedFeature(Stamped<Point> loc, TransformListener& tfl)
+  SavedFeature(Stamped<Point> loc, TransformListener& tfl, SampleSet sample_set)
     : tfl_(tfl)
     , sys_sigma_(Vector3(0.05, 0.05, 0.05), Vector3(1.0, 1.0, 1.0))
     , filter_("tracker_name", sys_sigma_)
     , reliability(-1.)
     , p(4)
+    , sample_set_(sample_set)
   {
     char id[100];
     snprintf(id, 100, "legtrack%d", nextid++);
@@ -137,6 +140,11 @@ public:
     updatePosition();
   }
 
+  ~SavedFeature()
+  {
+    sample_set_.clear();
+  }
+  
   void propagate(ros::Time time)
   {
     time_ = time;
@@ -272,6 +280,7 @@ public:
   ros::Publisher people_tuw_pub_;
   ros::Publisher leg_measurements_pub_;
   ros::Publisher markers_pub_;
+  ros::Publisher laser_pub_;
 
   dynamic_reconfigure::Server<leg_detector::LegDetectorConfig> server_;
 
@@ -313,6 +322,7 @@ public:
     people_measurements_pub_ = nh_.advertise<people_msgs::PositionMeasurementArray>("people_tracker_measurements", 0);
     people_tuw_pub_ = nh_.advertise<tuw_object_msgs::ObjectDetection>("people_measurements_tuw", 0);
     markers_pub_ = nh_.advertise<visualization_msgs::Marker>("visualization_marker", 20);
+    laser_pub_ = nh_.advertise<sensor_msgs::LaserScan>("filter_scan", 100);
 
     if (use_seeds_)
     {
@@ -782,7 +792,7 @@ public:
       if (closest == propagated.end())
       {
         list<SavedFeature*>::iterator new_saved =
-            saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_));
+            saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_, **i));
       }
       // Add the candidate, the tracker and the distance to a match list
       else
@@ -860,7 +870,7 @@ public:
         // so create a new tracker for this candidate
         if (closest == propagated.end())
           list<SavedFeature*>::iterator new_saved =
-              saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_));
+              saved_features_.insert(saved_features_.end(), new SavedFeature(loc, tfl_, *(matched_iter->candidate_)));
         else
           matches.insert(MatchedFeature(matched_iter->candidate_, *closest, closest_dist, matched_iter->probability_));
         matches.erase(matched_iter);
@@ -880,14 +890,19 @@ public:
     vector<tuw_object_msgs::ObjectWithCovariance> tuw_people;
     vector<tuw_object_msgs::ObjectWithCovariance> tuw_legs;
 
+    sensor_msgs::LaserScan filtered_scan;
+    filtered_scan = *scan;
+    //std::fill(filtered_scan.ranges.begin(), filtered_scan.ranges.end(), 0);
+    
     for (list<SavedFeature*>::iterator sf_iter = saved_features_.begin(); sf_iter != saved_features_.end();
          sf_iter++, i++)
-    {
+    {      
       // reliability
       double reliability = (*sf_iter)->getReliability();
 
       if ((*sf_iter)->getReliability() > leg_reliability_limit_ && publish_legs_)
       {
+        
         people_msgs::PositionMeasurement pos;
         pos.header.stamp = scan->header.stamp;
         pos.header.frame_id = fixed_frame;
@@ -985,6 +1000,37 @@ public:
           double yaw = atan2(vy, vx);
           tf::Quaternion q;
           q.setRPY(0, 0, yaw);
+          
+          // ------------------------------------------------------------------
+          // publish filtered laser scan without detected people (legs)
+          
+          // set filtered ranges to max
+          SampleSet::iterator sample_set_iter = (*sf_iter)->sample_set_.begin();
+          
+          for(; sample_set_iter != (*sf_iter)->sample_set_.end(); sample_set_iter++)
+          {
+            // for each sample in the sample set, set the laser beam to max
+            if((*sample_set_iter)->index < filtered_scan.ranges.size())
+            {
+              filtered_scan.ranges[(*sample_set_iter)->index] = filtered_scan.range_max;
+              //filtered_scan.ranges[(*sample_set_iter)->index] = scan->ranges[(*sample_set_iter)->index];
+            }
+          }
+
+          // also for other leg
+          sample_set_iter = other->sample_set_.begin();
+
+          for(; sample_set_iter != other->sample_set_.end(); sample_set_iter++)
+          {
+            // for each sample in the sample set, set the laser beam to max
+            if((*sample_set_iter)->index < filtered_scan.ranges.size())
+            {
+              filtered_scan.ranges[(*sample_set_iter)->index] = filtered_scan.range_max;
+              //filtered_scan.ranges[(*sample_set_iter)->index] = scan->ranges[(*sample_set_iter)->index];
+            }
+          }
+  
+          // ------------------------------------------------------------------
 
           if (publish_people_)
           {
@@ -1098,6 +1144,7 @@ public:
     {
       array.people = people;
       people_measurements_pub_.publish(array);
+      laser_pub_.publish(filtered_scan);
       detection_array.objects = tuw_people;
       people_tuw_pub_.publish(detection_array);
     }
