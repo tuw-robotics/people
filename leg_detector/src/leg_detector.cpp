@@ -892,7 +892,7 @@ public:
 
     sensor_msgs::LaserScan filtered_scan;
     filtered_scan = *scan;
-    //std::fill(filtered_scan.ranges.begin(), filtered_scan.ranges.end(), 0);
+    std::fill(filtered_scan.ranges.begin(), filtered_scan.ranges.end(), 0);
     
     for (list<SavedFeature*>::iterator sf_iter = saved_features_.begin(); sf_iter != saved_features_.end();
          sf_iter++, i++)
@@ -1004,7 +1004,7 @@ public:
           // ------------------------------------------------------------------
           // publish filtered laser scan without detected people (legs)
           
-          // set filtered ranges to max
+          // set filtered ranges to inf
           SampleSet::iterator sample_set_iter = (*sf_iter)->sample_set_.begin();
           
           for(; sample_set_iter != (*sf_iter)->sample_set_.end(); sample_set_iter++)
@@ -1012,8 +1012,9 @@ public:
             // for each sample in the sample set, set the laser beam to max
             if((*sample_set_iter)->index < filtered_scan.ranges.size())
             {
-              filtered_scan.ranges[(*sample_set_iter)->index] = filtered_scan.range_max;
-              //filtered_scan.ranges[(*sample_set_iter)->index] = scan->ranges[(*sample_set_iter)->index];
+              //filtered_scan.ranges[(*sample_set_iter)->index] = std::numeric_limits<float>::infinity();
+              //ROS_ERROR("filtered range of index %d", (*sample_set_iter)->index);
+              filtered_scan.ranges[(*sample_set_iter)->index] = scan->ranges[(*sample_set_iter)->index];
             }
           }
 
@@ -1025,8 +1026,9 @@ public:
             // for each sample in the sample set, set the laser beam to max
             if((*sample_set_iter)->index < filtered_scan.ranges.size())
             {
-              filtered_scan.ranges[(*sample_set_iter)->index] = filtered_scan.range_max;
-              //filtered_scan.ranges[(*sample_set_iter)->index] = scan->ranges[(*sample_set_iter)->index];
+              //filtered_scan.ranges[(*sample_set_iter)->index] = std::numeric_limits<float>::infinity();
+              //ROS_ERROR("filtered range of index %d", (*sample_set_iter)->index);
+              filtered_scan.ranges[(*sample_set_iter)->index] = scan->ranges[(*sample_set_iter)->index];
             }
           }
   
