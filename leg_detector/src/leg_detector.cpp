@@ -1136,6 +1136,7 @@ public:
     detection_array.fov_horizontal = scan_meta_.angle_max - scan_meta_.angle_min;
     detection_array.fov_vertical = 0;
     detection_array.type = tuw_object_msgs::ObjectDetection::OBJECT_TYPE_PERSON;
+    detection_array.sensor_type = tuw_object_msgs::ObjectDetection::SENSOR_TYPE_GENERIC_LASER_2D;
 
     if (publish_legs_)
     {
