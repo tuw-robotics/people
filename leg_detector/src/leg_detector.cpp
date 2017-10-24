@@ -311,7 +311,7 @@ public:
     // advertise topics
     leg_measurements_pub_ = nh_.advertise<people_msgs::PositionMeasurementArray>("leg_tracker_measurements", 0);
     people_measurements_pub_ = nh_.advertise<people_msgs::PositionMeasurementArray>("people_tracker_measurements", 0);
-    people_tuw_pub_ = nh_.advertise<tuw_object_msgs::ObjectDetection>("people_measurements_tuw", 0);
+    people_tuw_pub_ = nh_.advertise<tuw_object_msgs::ObjectDetection>("detected_persons_tuw", 0);
     markers_pub_ = nh_.advertise<visualization_msgs::Marker>("visualization_marker", 20);
 
     if (use_seeds_)
@@ -1111,7 +1111,19 @@ int main(int argc, char** argv)
   g_argv = argv;
   ros::NodeHandle nh;
   LegDetector ld(nh);
-  ros::spin();
+  //ros::spin();
+  
+  ros::Rate r(30);
+
+  while (ros::ok())
+  {
+    ros::spinOnce();
+    if (!r.sleep())
+    {
+      ROS_WARN("In %s: Loop missed desired rate of %.4fs (loop actually took %.4fs)", ros::this_node::getName().c_str(),
+               r.expectedCycleTime().toSec(), r.cycleTime().toSec());
+    }
+  }
 
   return 0;
 }
